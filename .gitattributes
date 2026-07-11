@@ -1,0 +1,2 @@
+openlist-linux-amd64 filter=lfs diff=lfs merge=lfs -text
+data/data.db filter=lfs diff=lfs merge=lfs -text
