@@ -10,9 +10,7 @@ const CONCURRENT_CHUNKS = 3
 const MAX_RETRIES = 3
 
 export const getChunkSize = (chunkSizeMB?: number): number => {
-  const mb =
-    chunkSizeMB && chunkSizeMB > 0 ? chunkSizeMB : DEFAULT_CHUNK_SIZE_MB
-  // 限制 1~100MB
+  const mb = chunkSizeMB && chunkSizeMB > 0 ? chunkSizeMB : DEFAULT_CHUNK_SIZE_MB
   const clamped = Math.max(1, Math.min(100, mb))
   return clamped * 1024 * 1024
 }
@@ -41,12 +39,7 @@ type PartResp = {
 }
 
 /**
- * 分片上传：
- * - 大文件自动分片（默认 10MB，可在 UI 中调整）
- * - 3 并发上传，每个分片失败重试 3 次
- * - init 时传入哈希，命中相同哈希 → 秒传
- * - 同目录已存在同名文件：哈希相同跳过；哈希不同 + overwrite=true 覆盖更新
- * - 支持断点续传（complete 前再次 init 同 path 会复用 upload_id）
+ * 分片上传 - 完整优化版
  */
 export const ChunkedUpload: Upload = async (
   uploadPath: string,
@@ -61,7 +54,7 @@ export const ChunkedUpload: Upload = async (
   const chunkSize = getChunkSize(chunkSizeMB)
   const totalChunks = Math.max(1, Math.ceil(file.size / chunkSize))
 
-  // 计算哈希（秒传必需；用户勾选"尝试秒传"时计算）
+  // 计算哈希（秒传）
   let md5 = ""
   let sha1 = ""
   let sha256 = ""
@@ -77,6 +70,7 @@ export const ChunkedUpload: Upload = async (
 
   setUpload("status", "uploading")
   setUpload("progress", 0)
+  setUpload("speed", 0)
 
   // 1. 初始化上传会话
   const initResp: InitResp = await r.post(
@@ -111,88 +105,75 @@ export const ChunkedUpload: Upload = async (
   if (!uploadID) {
     throw new Error("server did not return upload_id")
   }
-  // 实际采用的分片大小（后端可能调整）
+
   const actualChunkSize = initResp.data.chunk_size || chunkSize
   const actualTotal = initResp.data.total_chunks || totalChunks
-  // 已上传分片（断点续传）
-  const uploadedSet = new Set(initResp.data.uploaded || [])
+  const uploadedSet = new Set<number>(initResp.data.uploaded || [])
 
-  // 2. 并发上传分片
-  let nextChunkIndex = 0
+  // ==================== 速率计算优化（全局 + 平滑） ====================
   let completedBytes = 0
-  let oldTimestamp = Date.now()
-  let oldLoaded = 0
+  let lastUpdateTime = Date.now()
+  let lastUpdateBytes = 0
+  const speedHistory: number[] = []
 
-  const updateProgress = (deltaBytes: number) => {
-    completedBytes += deltaBytes
-    const pct = Math.min(100, Math.floor((completedBytes / file.size) * 100))
+  const updateProgressAndSpeed = (currentBytes: number) => {
+    completedBytes = currentBytes
+    const pct = Math.min(100, Math.floor((currentBytes / file.size) * 100))
     setUpload("progress", pct)
 
     const now = Date.now()
-    const duration = (now - oldTimestamp) / 1000
-    // ✅ FIX: 降低阈值从 >1s 到 >0.3s，提高速度计算灵敏度
-    if (duration > 0.3 && completedBytes > oldLoaded) {
-      const loaded = completedBytes - oldLoaded
-      const speed = loaded / duration
-      setUpload("speed", Math.round(speed))
-      oldTimestamp = now
-      oldLoaded = completedBytes
+    const duration = (now - lastUpdateTime) / 1000
+
+    if (duration > 0.35 && currentBytes > lastUpdateBytes) {
+      let speed = (currentBytes - lastUpdateBytes) / duration
+
+      // 移动平均平滑
+      speedHistory.push(speed)
+      if (speedHistory.length > 8) speedHistory.shift()
+      const avgSpeed = speedHistory.reduce((a, b) => a + b, 0) / speedHistory.length
+
+      setUpload("speed", Math.round(avgSpeed))
+      lastUpdateTime = now
+      lastUpdateBytes = currentBytes
     }
   }
+  // ============================================================
 
   const uploadOneChunk = async (chunkIndex: number): Promise<void> => {
     if (uploadedSet.has(chunkIndex)) {
-      // 已上传过，断点续传跳过
       const start = chunkIndex * actualChunkSize
       const end = Math.min(start + actualChunkSize, file.size)
-      updateProgress(end - start)
+      updateProgressAndSpeed(completedBytes + (end - start))
       return
     }
+
     const start = chunkIndex * actualChunkSize
     const end = Math.min(start + actualChunkSize, file.size)
-    const size = end - start
     const chunk = file.slice(start, end)
 
     let lastErr: Error | null = null
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
-        await r.put(
-          `/fs/chunk/upload?upload_id=${uploadID}&chunk_index=${chunkIndex}`,
-          chunk,
-          {
-            headers: {
-              "Content-Type": "application/octet-stream",
-            },
-            // ✅ FIX: 添加 onUploadProgress 回调，实时上报进度和速度
-            onUploadProgress: (progressEvent: any) => {
-              if (!progressEvent.lengthComputable) return
+        const form = new FormData()
+        form.append("upload_id", uploadID)
+        form.append("chunk_index", String(chunkIndex))
+        form.append("chunk", chunk)
 
-              const chunkLoaded = progressEvent.loaded
-              const globalLoaded =
-                chunkIndex * actualChunkSize + chunkLoaded
-              const pct = Math.min(
-                100,
-                Math.floor((globalLoaded / file.size) * 100),
-              )
-
-              setUpload("progress", pct)
-
-              const now = Date.now()
-              const dur = (now - oldTimestamp) / 1000
-
-              // ✅ FIX: 降低阈值，确保有速度显示
-              if (dur > 0.3 && globalLoaded > oldLoaded) {
-                const speed = (globalLoaded - oldLoaded) / dur
-                setUpload("speed", Math.round(speed))
-                oldTimestamp = now
-                oldLoaded = globalLoaded
-              }
-            },
+        const resp: PartResp = await r.post("/fs/chunk/upload", form, {
+          headers: {
+            Password: password(),
           },
-        )
+        })
+
+        if (resp.code !== 200) {
+          throw new Error(resp.message || `upload chunk ${chunkIndex} failed`)
+        }
+
+        updateProgressAndSpeed(completedBytes + (end - start))
+        uploadedSet.add(chunkIndex)
         return
-      } catch (e) {
-        lastErr = e instanceof Error ? e : new Error(String(e))
+      } catch (e: any) {
+        lastErr = e
         if (attempt < MAX_RETRIES - 1) {
           await new Promise((resolve) =>
             setTimeout(resolve, 500 * (attempt + 1)),
@@ -203,7 +184,8 @@ export const ChunkedUpload: Upload = async (
     throw lastErr || new Error(`upload chunk ${chunkIndex} failed after retries`)
   }
 
-  // 简单的并发池
+  // 并发上传
+  let nextChunkIndex = 0
   const workers: Promise<void>[] = []
   for (let w = 0; w < CONCURRENT_CHUNKS; w++) {
     workers.push(
@@ -235,11 +217,13 @@ export const ChunkedUpload: Upload = async (
   if (completeResp.code !== 200) {
     throw new Error(completeResp.message || "complete failed")
   }
+
+  setUpload("progress", 100)
+  setUpload("status", "success")
 }
 
 /**
  * 智能上传：大文件走分片，小文件走 Stream
- * 通过 store 中的 uploadConfig.chunkSizeMB 控制"大文件"阈值（默认 10MB）
  */
 export const SmartUpload: Upload = async (
   uploadPath: string,
@@ -252,7 +236,7 @@ export const SmartUpload: Upload = async (
   const threshold = getChunkSize(
     Number(localStorage.getItem("chunk_size_mb")) || undefined,
   )
-  if (file.size >= threshold) {
+  if (file.size > threshold) {
     return ChunkedUpload(
       uploadPath,
       file,
@@ -262,7 +246,7 @@ export const SmartUpload: Upload = async (
       rapid,
     ) as any
   }
-  // 小文件用 Stream 上传（更高效）
+  // 小文件用 Stream 上传
   const { StreamUpload } = await import("./stream")
   return StreamUpload(uploadPath, file, setUpload, asTask, overwrite, rapid)
 }
