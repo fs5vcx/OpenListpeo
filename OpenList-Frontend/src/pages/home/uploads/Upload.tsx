@@ -113,7 +113,7 @@ const Upload = () => {
   const uploaders = getUploads()
   const [curUploader, setCurUploader] = createSignal(uploaders[0])
   const [chunkSizeMB, setChunkSizeMB] = createSignal<number>(
-    () => Number(localStorage.getItem("chunk_size_mb")) || 10,
+    Number(localStorage.getItem("chunk_size_mb")) || 10,
   )
   // 是否为分片相关方式（需要展示分片大小输入框）
   const isChunkedMode = () => {
