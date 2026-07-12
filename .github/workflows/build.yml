@@ -1,9 +1,6 @@
 name: Build OpenList Full Stack
 
 on:
-  push:
-    branches:
-      - trae/agent-11gk5T
   workflow_dispatch:
 
 # 允许写入仓库（用于推送构建产物）
