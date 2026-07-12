@@ -12,7 +12,7 @@ function createSpeedCalculator(throttleMs = 500) {
 
     if (timeDiff >= throttleMs / 1000) {
       const speed = (loaded - lastLoaded) / timeDiff
-      setUpload?.("speed", speed)
+      setUpload?.("speed", Math.max(0, Math.round(speed)))
       lastLoaded = loaded
       lastTime = now
     }
