@@ -162,7 +162,6 @@ export const ChunkedUpload: Upload = async (
         form.append("chunk", chunk)
         const resp: PartResp = await r.post("/fs/chunk/upload", form, {
           headers: {
-            "Content-Type": "multipart/form-data",
             Password: password(),
           },
         })

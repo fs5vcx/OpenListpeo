@@ -138,17 +138,18 @@ func ChunkUploadInit(c *gin.Context) {
 		common.ErrorResp(c, err, 403)
 		return
 	}
-	// path 已是完整文件路径
-	dstPath := path
-	fileName := stdpath.Base(dstPath)
-	if req.FileName != "" && req.FileName != fileName {
-		// 兼容：前端可能同时传 path 和 file_name，以 path 为准
-		fileName = req.FileName
+	// path 是目录路径，file_name 是文件名，拼接成完整文件路径
+	dirPath := path
+	fileName := req.FileName
+	if fileName == "" {
+		// 兼容：如果 path 本身就包含文件名
+		fileName = stdpath.Base(dirPath)
 	}
 	if err := checkRelativePath(fileName); err != nil {
 		common.ErrorResp(c, err, 403)
 		return
 	}
+	dstPath := stdpath.Join(dirPath, fileName)
 	// 解析哈希
 	h := make(map[*utils.HashType]string)
 	if req.MD5 != "" {
