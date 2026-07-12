@@ -1,0 +1,238 @@
+name: Build OpenList Full Stack
+
+on:
+  workflow_dispatch:
+
+# 允许写入仓库（用于推送构建产物）
+permissions:
+  contents: write
+
+env:
+  GO_VERSION: "1.25"
+  NODE_VERSION: "24"
+  PNPM_VERSION: "11"
+
+jobs:
+  # ── Job 1: 构建前端 ──
+  build-frontend:
+    name: Build Frontend
+    runs-on: ubuntu-latest
+    outputs:
+      dist-exists: ${{ steps.dist-check.outputs.exists }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Get pnpm store directory
+        id: pnpm-cache
+        run: |
+          echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
+
+      - name: Cache pnpm dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('OpenList-Frontend/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      - name: Install frontend dependencies
+        working-directory: OpenList-Frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend (dev mode)
+        working-directory: OpenList-Frontend
+        run: |
+          export OPENLIST_FRONTEND_BUILD_MODE=dev
+          export OPENLIST_FRONTEND_BUILD_SKIP_I18N=true
+          bash build.sh
+
+      - name: Check dist output
+        id: dist-check
+        run: |
+          if [ -d "OpenList-Frontend/dist" ] && [ "$(ls -A OpenList-Frontend/dist)" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "✅ Frontend dist built successfully"
+            ls -lh OpenList-Frontend/dist/
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "❌ Frontend dist is empty"
+          fi
+
+      - name: Upload frontend dist artifact
+        if: steps.dist-check.outputs.exists == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: OpenList-Frontend/dist
+          retention-days: 1
+
+  # ── Job 2: 构建后端 & 完整二进制 ──
+  build-backend:
+    name: Build Backend Binary
+    runs-on: ubuntu-latest
+    needs: build-frontend
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 1
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('OpenList/go.mod') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Download frontend dist from previous job
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: OpenList/public/dist
+
+      - name: Verify frontend dist in place
+        run: |
+          echo "📂 OpenList/public/dist contents:"
+          ls -lh OpenList/public/dist/
+
+      - name: Build backend binary (linux/amd64)
+        working-directory: OpenList
+        run: |
+          GOTOOLCHAIN=local \
+          CGO_ENABLED=0 \
+          GOOS=linux \
+          GOARCH=amd64 \
+          go build \
+            -o ../openlist-linux-amd64 \
+            -ldflags="-w -s \
+              -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.Version=v4.2.3-custom' \
+              -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=v4.2.3'" \
+            -tags=jsoniter \
+            .
+
+      - name: Verify binary
+        run: |
+          ls -lh openlist-linux-amd64
+          file openlist-linux-amd64
+          echo "✅ Binary built successfully"
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openlist-binary
+          path: openlist-linux-amd64
+          retention-days: 1
+
+  # ── Job 3: 推送构建产物回仓库 ──
+  commit-and-push:
+    name: Commit & Push Build Artifacts
+    runs-on: ubuntu-latest
+    needs: [build-frontend, build-backend]
+    steps:
+      - name: Checkout code (with LFS)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 1
+          lfs: true
+
+      - name: Setup Git LFS
+        run: |
+          git lfs install
+          git lfs pull
+
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: /tmp/frontend-dist
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: openlist-binary
+          path: /tmp
+
+      - name: Copy artifacts into repo
+        run: |
+          # 同步前端 dist 到后端 public 目录
+          rm -rf OpenList/public/dist
+          cp -r /tmp/frontend-dist OpenList/public/dist
+
+          # 复制二进制到仓库根目录
+          cp /tmp/openlist-linux-amd64 openlist-linux-amd64
+
+          echo "📂 Final structure:"
+          ls -lh openlist-linux-amd64
+          ls -lh OpenList/public/dist/
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Commit and push changes
+        run: |
+          git add OpenList/public/dist/ openlist-linux-amd64
+
+          # 只在有变更时提交
+          if git diff --cached --quiet; then
+            echo "✅ No changes to commit — build artifacts are up to date"
+          else
+            TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+            git commit -m "ci: auto-build frontend dist and backend binary
+
+            Built at: ${TIMESTAMP}
+            Frontend: OpenList-Frontend/dist → OpenList/public/dist
+            Backend:  openlist-linux-amd64 (linux/amd64, CGO_ENABLED=0)"
+
+            git push origin ${{ github.ref }}
+            echo "✅ Build artifacts pushed to ${{ github.ref }}"
+          fi
+
+  # ── Job 4: 构建摘要 ──
+  build-summary:
+    name: Build Summary
+    runs-on: ubuntu-latest
+    needs: [build-frontend, build-backend, commit-and-push]
+    if: always()
+    steps:
+      - name: Print build summary
+        run: |
+          echo "## 🏗️ OpenList Full Stack Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Frontend (pnpm build) | ${{ needs.build-frontend.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Backend (go build)    | ${{ needs.build-backend.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Push Artifacts        | ${{ needs.commit-and-push.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "- **Frontend dist**: OpenList/public/dist/" >> $GITHUB_STEP_SUMMARY
+          echo "- **Binary**: openlist-linux-amd64 (linux/amd64)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Commit Info" >> $GITHUB_STEP_SUMMARY
+          echo "Triggered by: \`${{ github.event_name }}\` on \`${{ github.ref }}\`" >> $GITHUB_STEP_SUMMARY
