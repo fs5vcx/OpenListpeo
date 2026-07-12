@@ -37,6 +37,38 @@ type PartResp = {
     uploaded_chunks?: number[]
   }
 }
+// ==================== 并发安全的实时速率统计 ====================
+let totalUploadedBytes = 0
+let lastSpeedCalcTime = Date.now()
+let lastSpeedBytes = 0
+const speedSamples: number[] = []
+
+const addUploadedBytes = (bytes: number) => {
+  totalUploadedBytes += bytes
+
+  const now = Date.now()
+  const dt = (now - lastSpeedCalcTime) / 1000
+
+  if (dt >= 0.3) {
+    const diff = totalUploadedBytes - lastSpeedBytes
+    const speed = diff / dt
+
+    speedSamples.push(speed)
+    if (speedSamples.length > 8) speedSamples.shift()
+
+    const avgSpeed =
+      speedSamples.reduce((a, b) => a + b, 0) / speedSamples.length
+
+    setUpload("speed", Math.round(avgSpeed))
+
+    lastSpeedCalcTime = now
+    lastSpeedBytes = totalUploadedBytes
+  }
+
+  const pct = Math.min(100, Math.floor((totalUploadedBytes / file.size) * 100))
+  setUpload("progress", pct)
+}
+// ============================================================
 
 /**
  * 分片上传 - 完整优化版
@@ -143,7 +175,7 @@ export const ChunkedUpload: Upload = async (
     if (uploadedSet.has(chunkIndex)) {
       const start = chunkIndex * actualChunkSize
       const end = Math.min(start + actualChunkSize, file.size)
-      updateProgressAndSpeed(completedBytes + (end - start))
+      addUploadedBytes(end - start)
       return
     }
 
@@ -170,7 +202,7 @@ export const ChunkedUpload: Upload = async (
           throw new Error(resp.message || `upload chunk ${chunkIndex} failed`)
         }
 
-        updateProgressAndSpeed(completedBytes + (end - start))
+        addUploadedBytes(end - start)
         uploadedSet.add(chunkIndex)
         return
       } catch (e: any) {
