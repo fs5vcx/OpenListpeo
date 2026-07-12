@@ -5,6 +5,7 @@ type Status =
   | "backending"
   | "success"
   | "error"
+
 export interface UploadFileProps {
   name: string
   path: string
@@ -14,6 +15,7 @@ export interface UploadFileProps {
   status: Status
   msg?: string
 }
+
 export const StatusBadge = {
   pending: "neutral",
   hashing: "warning",
@@ -22,6 +24,7 @@ export const StatusBadge = {
   success: "success",
   error: "danger",
 } as const
+
 export type SetUpload = (key: keyof UploadFileProps, value: any) => void
 export type Upload = (
   uploadPath: string,
@@ -30,4 +33,4 @@ export type Upload = (
   asTask: boolean,
   overwrite: boolean,
   rapid: boolean,
-) => Promise<Error | undefined>
+) => Promise<void>

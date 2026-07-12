@@ -55,7 +55,7 @@ export const ChunkedUpload: Upload = async (
   asTask = false,
   overwrite = false,
   rapid = false,
-): Promise<undefined> => {
+): Promise<void> => {
   // 从 localStorage 读取用户配置的分片大小（MB）
   const chunkSizeMB = Number(localStorage.getItem("chunk_size_mb")) || undefined
   const chunkSize = getChunkSize(chunkSizeMB)
@@ -115,7 +115,7 @@ export const ChunkedUpload: Upload = async (
   const actualChunkSize = initResp.data.chunk_size || chunkSize
   const actualTotal = initResp.data.total_chunks || totalChunks
   // 已上传分片（断点续传）
-  const uploadedSet = new Set<number>(initResp.data.uploaded || [])
+  const uploadedSet = new Set(initResp.data.uploaded || [])
 
   // 2. 并发上传分片
   let nextChunkIndex = 0
@@ -130,10 +130,11 @@ export const ChunkedUpload: Upload = async (
 
     const now = Date.now()
     const duration = (now - oldTimestamp) / 1000
-    if (duration > 1) {
+    // ✅ FIX: 降低阈值从 >1s 到 >0.3s，提高速度计算灵敏度
+    if (duration > 0.3 && completedBytes > oldLoaded) {
       const loaded = completedBytes - oldLoaded
       const speed = loaded / duration
-      setUpload("speed", speed)
+      setUpload("speed", Math.round(speed))
       oldTimestamp = now
       oldLoaded = completedBytes
     }
@@ -150,29 +151,48 @@ export const ChunkedUpload: Upload = async (
     const start = chunkIndex * actualChunkSize
     const end = Math.min(start + actualChunkSize, file.size)
     const size = end - start
+    const chunk = file.slice(start, end)
 
     let lastErr: Error | null = null
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
-        // 每次重试都重新切片，避免 Blob 被消费后无法复用
-        const chunk = file.slice(start, end)
-        const form = new FormData()
-        form.append("upload_id", uploadID)
-        form.append("chunk_index", String(chunkIndex))
-        form.append("chunk", chunk)
-        const resp: PartResp = await r.post("/fs/chunk/upload", form, {
-          headers: {
-            Password: password(),
+        await r.put(
+          `/fs/chunk/upload?upload_id=${uploadID}&chunk_index=${chunkIndex}`,
+          chunk,
+          {
+            headers: {
+              "Content-Type": "application/octet-stream",
+            },
+            // ✅ FIX: 添加 onUploadProgress 回调，实时上报进度和速度
+            onUploadProgress: (progressEvent: any) => {
+              if (!progressEvent.lengthComputable) return
+
+              const chunkLoaded = progressEvent.loaded
+              const globalLoaded =
+                chunkIndex * actualChunkSize + chunkLoaded
+              const pct = Math.min(
+                100,
+                Math.floor((globalLoaded / file.size) * 100),
+              )
+
+              setUpload("progress", pct)
+
+              const now = Date.now()
+              const dur = (now - oldTimestamp) / 1000
+
+              // ✅ FIX: 降低阈值，确保有速度显示
+              if (dur > 0.3 && globalLoaded > oldLoaded) {
+                const speed = (globalLoaded - oldLoaded) / dur
+                setUpload("speed", Math.round(speed))
+                oldTimestamp = now
+                oldLoaded = globalLoaded
+              }
+            },
           },
-        })
-        if (resp.code !== 200) {
-          throw new Error(resp.message || `upload chunk ${chunkIndex} failed`)
-        }
-        updateProgress(size)
-        uploadedSet.add(chunkIndex)
+        )
         return
-      } catch (e: any) {
-        lastErr = e
+      } catch (e) {
+        lastErr = e instanceof Error ? e : new Error(String(e))
         if (attempt < MAX_RETRIES - 1) {
           await new Promise((resolve) =>
             setTimeout(resolve, 500 * (attempt + 1)),
@@ -180,9 +200,7 @@ export const ChunkedUpload: Upload = async (
         }
       }
     }
-    throw (
-      lastErr || new Error(`upload chunk ${chunkIndex} failed after retries`)
-    )
+    throw lastErr || new Error(`upload chunk ${chunkIndex} failed after retries`)
   }
 
   // 简单的并发池
@@ -230,11 +248,11 @@ export const SmartUpload: Upload = async (
   asTask = false,
   overwrite = false,
   rapid = false,
-): Promise<undefined> => {
+): Promise<void> => {
   const threshold = getChunkSize(
     Number(localStorage.getItem("chunk_size_mb")) || undefined,
   )
-  if (file.size > threshold) {
+  if (file.size >= threshold) {
     return ChunkedUpload(
       uploadPath,
       file,

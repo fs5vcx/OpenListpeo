@@ -6,7 +6,7 @@ export const traverseFileTree = async (entry: FileSystemEntry) => {
   const res: File[] = []
 
   const internalProcess = async (entry: FileSystemEntry, path: string) => {
-    await new Promise<void>((resolve, reject) => {
+    await new Promise((resolve, reject) => {
       const errorCallback: ErrorCallback = (e) => {
         console.error(e)
         reject(e)
@@ -32,18 +32,6 @@ export const traverseFileTree = async (entry: FileSystemEntry) => {
             } else {
               resolve()
             }
-
-            /**
-            why? https://stackoverflow.com/questions/3590058/does-html5-allow-drag-drop-upload-of-folders-or-a-folder-tree/53058574#53058574
-            Unfortunately none of the existing answers are completely correct because 
-            readEntries will not necessarily return ALL the (file or directory) entries for a given directory. 
-            This is part of the API specification (see Documentation section below).
-            
-            To actually get all the files, we'll need to call readEntries repeatedly (for each directory we encounter) 
-            until it returns an empty array. If we don't, we will miss some files/sub-directories in a directory 
-            e.g. in Chrome, readEntries will only return at most 100 entries at a time.
-            
-            */
           }, errorCallback)
         }
         readEntries()
@@ -80,7 +68,7 @@ export const calculateHash = async (
 
       worker.postMessage({ file })
 
-      worker.onmessage = (e: MessageEvent<WorkerMessage>) => {
+      worker.onmessage = (e: MessageEvent) => {
         const data = e.data
         switch (data.type) {
           case "progress":

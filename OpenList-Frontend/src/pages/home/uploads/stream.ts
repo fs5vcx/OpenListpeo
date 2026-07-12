@@ -3,6 +3,7 @@ import { EmptyResp } from "~/types"
 import { r } from "~/utils"
 import { SetUpload, Upload } from "./types"
 import { calculateHash } from "./util"
+
 export const StreamUpload: Upload = async (
   uploadPath: string,
   file: File,
@@ -10,9 +11,10 @@ export const StreamUpload: Upload = async (
   asTask = false,
   overwrite = false,
   rapid = false,
-): Promise<undefined> => {
-  let oldTimestamp = new Date().valueOf()
+): Promise<void> => {
+  let oldTimestamp = Date.now()
   let oldLoaded = 0
+
   let headers: { [k: string]: any } = {
     "File-Path": encodeURIComponent(uploadPath),
     "As-Task": asTask,
@@ -21,6 +23,7 @@ export const StreamUpload: Upload = async (
     Password: password(),
     Overwrite: overwrite.toString(),
   }
+
   if (rapid) {
     setUpload("status", "hashing")
     const { md5, sha1, sha256 } = await calculateHash(file, (p) => {
@@ -30,35 +33,40 @@ export const StreamUpload: Upload = async (
     headers["X-File-Sha1"] = sha1
     headers["X-File-Sha256"] = sha256
   }
+
   setUpload("status", "uploading")
+
   const resp: EmptyResp = await r.put("/fs/put", file, {
     headers: headers,
-    onUploadProgress: (progressEvent) => {
-      if (progressEvent.total) {
-        const complete =
-          ((progressEvent.loaded / progressEvent.total) * 100) | 0
-        setUpload("progress", complete)
+    onUploadProgress: (progressEvent: any) => {
+      if (!progressEvent.lengthComputable) return
 
-        const timestamp = new Date().valueOf()
-        const duration = (timestamp - oldTimestamp) / 1000
-        if (duration > 1) {
-          const loaded = progressEvent.loaded - oldLoaded
-          const speed = loaded / duration
-          const remain = progressEvent.total - progressEvent.loaded
-          const remainTime = remain / speed
-          setUpload("speed", speed)
-          console.log(remainTime)
+      const loaded = progressEvent.loaded
+      const total = progressEvent.total || file.size
+      const complete = Math.min(100, Math.floor((loaded / total) * 100))
 
-          oldTimestamp = timestamp
-          oldLoaded = progressEvent.loaded
-        }
+      setUpload("progress", complete)
 
-        if (complete === 100) {
-          setUpload("status", "backending")
-        }
+      const now = Date.now()
+      const duration = (now - oldTimestamp) / 1000
+
+      // ✅ FIX: 降低阈值从 >1s 到 >0.3s，提高速度计算灵敏度
+      if (duration > 0.3 && loaded > oldLoaded) {
+        const speed = (loaded - oldLoaded) / duration
+        const remain = total - loaded
+        const remainTime = remain / speed
+        setUpload("speed", Math.round(speed))
+
+        oldTimestamp = now
+        oldLoaded = loaded
+      }
+
+      if (complete === 100) {
+        setUpload("status", "backending")
       }
     },
   })
+
   if (resp.code === 200) {
     return
   } else {
