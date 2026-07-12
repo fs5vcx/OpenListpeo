@@ -37,37 +37,6 @@ type PartResp = {
     uploaded_chunks?: number[]
   }
 }
-// ==================== 并发安全的实时速率统计 ====================
-let totalUploadedBytes = 0
-let lastSpeedCalcTime = Date.now()
-let lastSpeedBytes = 0
-const speedSamples: number[] = []
-
-const addUploadedBytes = (bytes: number) => {
-  totalUploadedBytes += bytes
-
-  const now = Date.now()
-  const dt = (now - lastSpeedCalcTime) / 1000
-
-  if (dt >= 0.3) {
-    const diff = totalUploadedBytes - lastSpeedBytes
-    const speed = diff / dt
-
-    speedSamples.push(speed)
-    if (speedSamples.length > 8) speedSamples.shift()
-
-    const avgSpeed =
-      speedSamples.reduce((a, b) => a + b, 0) / speedSamples.length
-
-    setUpload("speed", Math.round(avgSpeed))
-
-    lastSpeedCalcTime = now
-    lastSpeedBytes = totalUploadedBytes
-  }
-
-  const pct = Math.min(100, Math.floor((totalUploadedBytes / file.size) * 100))
-  setUpload("progress", pct)
-}
 // ============================================================
 
 /**
@@ -142,40 +111,60 @@ export const ChunkedUpload: Upload = async (
   const actualTotal = initResp.data.total_chunks || totalChunks
   const uploadedSet = new Set<number>(initResp.data.uploaded || [])
 
-  // ==================== 速率计算优化（全局 + 平滑） ====================
-  let completedBytes = 0
-  let lastUpdateTime = Date.now()
-  let lastUpdateBytes = 0
-  const speedHistory: number[] = []
+  // ==================== 局部并发安全的实时速率与进度统计 ====================
+  const chunkProgress = new Array(actualTotal).fill(0)
+  let lastSpeedCalcTime = Date.now()
+  let lastSpeedBytes = 0
+  const speedSamples: number[] = []
+  let maxProgress = 0
 
-  const updateProgressAndSpeed = (currentBytes: number) => {
-    completedBytes = currentBytes
-    const pct = Math.min(100, Math.floor((currentBytes / file.size) * 100))
-    setUpload("progress", pct)
+  // 预先填充已经完成的分片进度
+  for (const idx of uploadedSet) {
+    const start = idx * actualChunkSize
+    const end = Math.min(start + actualChunkSize, file.size)
+    chunkProgress[idx] = end - start
+  }
+
+  // 根据已完成的分片初始化进度
+  const initialLoaded = chunkProgress.reduce((a, b) => a + b, 0)
+  maxProgress = Math.min(100, Math.floor((initialLoaded / file.size) * 100))
+  setUpload("progress", maxProgress)
+  lastSpeedBytes = initialLoaded
+
+  const updateChunkProgress = (chunkIndex: number, uploadedBytes: number) => {
+    chunkProgress[chunkIndex] = uploadedBytes
+
+    const totalLoaded = chunkProgress.reduce((a, b) => a + b, 0)
+    const pct = Math.min(100, Math.floor((totalLoaded / file.size) * 100))
+    if (pct > maxProgress) {
+      maxProgress = pct
+      setUpload("progress", pct)
+    }
 
     const now = Date.now()
-    const duration = (now - lastUpdateTime) / 1000
+    const dt = (now - lastSpeedCalcTime) / 1000
 
-    if (duration > 0.35 && currentBytes > lastUpdateBytes) {
-      let speed = (currentBytes - lastUpdateBytes) / duration
+    if (dt >= 0.3) {
+      const diff = totalLoaded - lastSpeedBytes
+      if (diff > 0) {
+        const speed = diff / dt
 
-      // 移动平均平滑
-      speedHistory.push(speed)
-      if (speedHistory.length > 8) speedHistory.shift()
-      const avgSpeed = speedHistory.reduce((a, b) => a + b, 0) / speedHistory.length
+        speedSamples.push(speed)
+        if (speedSamples.length > 8) speedSamples.shift()
 
-      setUpload("speed", Math.round(avgSpeed))
-      lastUpdateTime = now
-      lastUpdateBytes = currentBytes
+        const avgSpeed =
+          speedSamples.reduce((a, b) => a + b, 0) / speedSamples.length
+
+        setUpload("speed", Math.round(avgSpeed))
+      }
+      lastSpeedCalcTime = now
+      lastSpeedBytes = totalLoaded
     }
   }
-  // ============================================================
+  // ======================================================================
 
   const uploadOneChunk = async (chunkIndex: number): Promise<void> => {
     if (uploadedSet.has(chunkIndex)) {
-      const start = chunkIndex * actualChunkSize
-      const end = Math.min(start + actualChunkSize, file.size)
-      addUploadedBytes(end - start)
       return
     }
 
@@ -196,18 +185,28 @@ export const ChunkedUpload: Upload = async (
             "Content-Type": "application/octet-stream",
             Password: password(),
           },
+          onUploadProgress: (progressEvent) => {
+            if (progressEvent.lengthComputable) {
+              const loaded = progressEvent.loaded
+              const chunkUploaded = Math.min(loaded, end - start)
+              if (chunkUploaded > chunkProgress[chunkIndex]) {
+                updateChunkProgress(chunkIndex, chunkUploaded)
+              }
+            }
+          }
         })
 
         if (resp.code !== 200) {
           throw new Error(resp.message || `upload chunk ${chunkIndex} failed`)
         }
 
-        addUploadedBytes(end - start)
+        updateChunkProgress(chunkIndex, end - start)
         uploadedSet.add(chunkIndex)
         return
       } catch (e: any) {
         lastErr = e
         if (attempt < MAX_RETRIES - 1) {
+          chunkProgress[chunkIndex] = 0
           await new Promise((resolve) =>
             setTimeout(resolve, 500 * (attempt + 1)),
           )
