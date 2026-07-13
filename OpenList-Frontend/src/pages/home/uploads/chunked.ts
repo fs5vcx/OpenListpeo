@@ -15,6 +15,13 @@ export const getChunkSize = (chunkSizeMB?: number): number => {
   return clamped * 1024 * 1024
 }
 
+// 新增：拆分路径，提取目录（不含文件名）
+function splitDir(fullPath: string) {
+  const lastSlash = fullPath.lastIndexOf("/")
+  if (lastSlash === -1) return "/"
+  return fullPath.slice(0, lastSlash) || "/"
+}
+
 type InitResp = {
   code: number
   message: string
@@ -73,11 +80,13 @@ export const ChunkedUpload: Upload = async (
   setUpload("progress", 0)
   setUpload("speed", 0)
 
+  // 修正：只传目录路径，剥离文件名
+  const uploadDir = splitDir(uploadPath)
   // 1. 初始化上传会话
   const initResp: InitResp = await r.post(
     "/fs/chunk/init",
     {
-      path: uploadPath,
+      path: uploadDir,
       file_name: file.name,
       file_size: file.size,
       chunk_size: chunkSize,
