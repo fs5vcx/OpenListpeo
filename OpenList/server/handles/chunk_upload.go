@@ -344,7 +344,7 @@ type ChunkUploadCompleteReq struct {
 	SHA256   string `json:"sha256" form:"sha256"`
 }
 
-// 修复后的 ChunkUploadComplete
+// ==================== 最终修复版 ChunkUploadComplete ====================
 func ChunkUploadComplete(c *gin.Context) {
 	var req ChunkUploadCompleteReq
 	if err := c.ShouldBind(&req); err != nil {
@@ -367,6 +367,7 @@ func ChunkUploadComplete(c *gin.Context) {
 	session.mu.Lock()
 	session.LastActive = time.Now()
 
+	// 校验分片
 	missing := []int{}
 	for i := 0; i < session.TotalChunks; i++ {
 		if !session.Uploaded[i] {
@@ -379,22 +380,17 @@ func ChunkUploadComplete(c *gin.Context) {
 		return
 	}
 
+	// 更新哈希
 	if req.MD5 != "" || req.SHA1 != "" || req.SHA256 != "" {
 		h := make(map[*utils.HashType]string)
-		if req.MD5 != "" {
-			h[utils.MD5] = req.MD5
-		}
-		if req.SHA1 != "" {
-			h[utils.SHA1] = req.SHA1
-		}
-		if req.SHA256 != "" {
-			h[utils.SHA256] = req.SHA256
-		}
+		if req.MD5 != "" { h[utils.MD5] = req.MD5 }
+		if req.SHA1 != "" { h[utils.SHA1] = req.SHA1 }
+		if req.SHA256 != "" { h[utils.SHA256] = req.SHA256 }
 		session.HashInfo = utils.NewHashInfoByMap(h)
 	}
 	session.mu.Unlock()
 
-	// 合并
+	// 合并文件
 	mergedPath := filepath.Join(session.TempDir, "merged")
 	mergedFile, err := os.OpenFile(mergedPath, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0o644)
 	if err != nil {
@@ -402,7 +398,6 @@ func ChunkUploadComplete(c *gin.Context) {
 		return
 	}
 
-	// 拼接分片
 	for i := 0; i < session.TotalChunks; i++ {
 		chunkPath := filepath.Join(session.TempDir, fmt.Sprintf("chunk_%d", i))
 		cf, err := os.Open(chunkPath)
@@ -434,27 +429,37 @@ func ChunkUploadComplete(c *gin.Context) {
 		return
 	}
 
-	// 构造 FileStream
-	dir, name := stdpath.Split(session.FilePath)
-	if shouldIgnoreSystemFile(name) {
+	// ==================== 核心修复 ====================
+	// 强制使用原始文件名，防止路径被错误拆分导致多一层目录
+	finalName := session.FileName
+	if finalName == "" {
+		_, finalName = stdpath.Split(session.FilePath)
+	}
+
+	dir := stdpath.Dir(session.FilePath)   // 只保留目录部分
+
+	if shouldIgnoreSystemFile(finalName) {
 		_ = mergedFile.Close()
 		abortSession(req.UploadID, "system file")
 		common.ErrorStrResp(c, errs.IgnoredSystemFile.Error(), 403)
 		return
 	}
 
-	mimetype := utils.GetMimeType(name)
+	mimetype := utils.GetMimeType(finalName)
+
 	s := &stream.FileStream{
 		Obj: &model.Object{
-			Name:     name,
+			Name:     finalName,
 			Size:     fileSize,
 			Modified: time.Now(),
 			HashInfo: session.HashInfo,
 		},
-		Reader:       mergedFile, // 关键修复：不提前关闭
-		Mimetype:     mimetype,
-		WebPutAsTask: session.AsTask,
+		Reader:            mergedFile,
+		Mimetype:          mimetype,
+		WebPutAsTask:      session.AsTask,
+		ForceStreamUpload: true,   // 强制流式上传，防止驱动额外处理
 	}
+	// ================================================
 
 	if existing, _ := fs.Get(c.Request.Context(), session.FilePath, &fs.GetArgs{NoLog: true}); existing != nil {
 		s.SetExist(existing)
@@ -484,7 +489,6 @@ func ChunkUploadComplete(c *gin.Context) {
 		"task":         getTaskInfo(t),
 	})
 }
-
 // ChunkUploadStatus
 func ChunkUploadStatus(c *gin.Context) {
 	uploadID := c.Query("upload_id")
