@@ -98,7 +98,7 @@ const Upload = () => {
       const upload = File2Upload(file)
       setUploadFiles("uploads", (uploads) => [...uploads, upload])
     }
-    for await (const ms of asyncPool(3, files, handleFile)) {
+    for await (const ms of asyncPool(1, files, handleFile)) {
       console.log(ms)
     }
     refresh()
