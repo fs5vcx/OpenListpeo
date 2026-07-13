@@ -116,7 +116,6 @@ func ChunkUploadInit(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-
 	path, err := url.PathUnescape(req.Path)
 	if err != nil {
 		common.ErrorResp(c, err, 400)
@@ -126,14 +125,12 @@ func ChunkUploadInit(c *gin.Context) {
 		common.ErrorStrResp(c, "path is required", 400)
 		return
 	}
-
 	user := c.Request.Context().Value(conf.UserKey).(*model.User)
 	path, err = user.JoinPath(path)
 	if err != nil {
 		common.ErrorResp(c, err, 403)
 		return
 	}
-
 	dirPath := path
 	fileName := req.FileName
 	if fileName == "" {
@@ -145,7 +142,6 @@ func ChunkUploadInit(c *gin.Context) {
 	}
 	dstPath := stdpath.Join(dirPath, fileName)
 
-	// 哈希处理
 	h := make(map[*utils.HashType]string)
 	if req.MD5 != "" {
 		h[utils.MD5] = req.MD5
@@ -158,7 +154,6 @@ func ChunkUploadInit(c *gin.Context) {
 	}
 	hashInfo := utils.NewHashInfoByMap(h)
 
-	// 检查已存在文件
 	existing, _ := fs.Get(c.Request.Context(), dstPath, &fs.GetArgs{NoLog: true})
 	if existing != nil {
 		if hashMatch(existing.GetHash(), hashInfo) {
@@ -178,7 +173,6 @@ func ChunkUploadInit(c *gin.Context) {
 		}
 	}
 
-	// 计算分片大小
 	chunkSize := req.ChunkSize
 	if chunkSize <= 0 {
 		chunkSize = DefaultChunkSize
@@ -197,7 +191,6 @@ func ChunkUploadInit(c *gin.Context) {
 		totalChunks = int((req.FileSize + chunkSize - 1) / chunkSize)
 	}
 
-	// 创建临时目录
 	tempBase := conf.Conf.TempDir
 	if tempBase == "" {
 		tempBase = os.TempDir()
@@ -223,7 +216,6 @@ func ChunkUploadInit(c *gin.Context) {
 		HashInfo:    hashInfo,
 		LastActive:  time.Now(),
 	}
-
 	chunkSessionsMu.Lock()
 	chunkSessions[uploadID] = session
 	chunkSessionsMu.Unlock()
@@ -263,7 +255,6 @@ func ChunkUploadPart(c *gin.Context) {
 		common.ErrorStrResp(c, "upload_id and chunk_index are required", 400)
 		return
 	}
-
 	var chunkIndex int
 	if _, err := fmt.Sscanf(chunkIndexStr, "%d", &chunkIndex); err != nil {
 		common.ErrorResp(c, err, 400)
@@ -291,7 +282,6 @@ func ChunkUploadPart(c *gin.Context) {
 	}
 	session.mu.Unlock()
 
-	// 读取分片
 	var reader io.Reader
 	if file, err := c.FormFile("chunk"); err == nil {
 		f, err := file.Open()
@@ -344,7 +334,7 @@ type ChunkUploadCompleteReq struct {
 	SHA256   string `json:"sha256" form:"sha256"`
 }
 
-// ==================== 最终修复版 ChunkUploadComplete ====================
+// 修复后的 ChunkUploadComplete
 func ChunkUploadComplete(c *gin.Context) {
 	var req ChunkUploadCompleteReq
 	if err := c.ShouldBind(&req); err != nil {
@@ -367,7 +357,6 @@ func ChunkUploadComplete(c *gin.Context) {
 	session.mu.Lock()
 	session.LastActive = time.Now()
 
-	// 校验分片
 	missing := []int{}
 	for i := 0; i < session.TotalChunks; i++ {
 		if !session.Uploaded[i] {
@@ -380,7 +369,6 @@ func ChunkUploadComplete(c *gin.Context) {
 		return
 	}
 
-	// 更新哈希
 	if req.MD5 != "" || req.SHA1 != "" || req.SHA256 != "" {
 		h := make(map[*utils.HashType]string)
 		if req.MD5 != "" { h[utils.MD5] = req.MD5 }
@@ -429,14 +417,12 @@ func ChunkUploadComplete(c *gin.Context) {
 		return
 	}
 
-	// ==================== 核心修复 ====================
-	// 强制使用原始文件名，防止路径被错误拆分导致多一层目录
+	// 核心修复：强制使用原始文件名
 	finalName := session.FileName
 	if finalName == "" {
 		_, finalName = stdpath.Split(session.FilePath)
 	}
-
-	dir := stdpath.Dir(session.FilePath)   // 只保留目录部分
+	dir := stdpath.Dir(session.FilePath)
 
 	if shouldIgnoreSystemFile(finalName) {
 		_ = mergedFile.Close()
@@ -457,9 +443,8 @@ func ChunkUploadComplete(c *gin.Context) {
 		Reader:            mergedFile,
 		Mimetype:          mimetype,
 		WebPutAsTask:      session.AsTask,
-		ForceStreamUpload: true,   // 强制流式上传，防止驱动额外处理
+		ForceStreamUpload: true,
 	}
-	// ================================================
 
 	if existing, _ := fs.Get(c.Request.Context(), session.FilePath, &fs.GetArgs{NoLog: true}); existing != nil {
 		s.SetExist(existing)
@@ -489,6 +474,7 @@ func ChunkUploadComplete(c *gin.Context) {
 		"task":         getTaskInfo(t),
 	})
 }
+
 // ChunkUploadStatus
 func ChunkUploadStatus(c *gin.Context) {
 	uploadID := c.Query("upload_id")
