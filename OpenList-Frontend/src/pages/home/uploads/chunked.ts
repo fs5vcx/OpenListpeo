@@ -6,7 +6,7 @@ import { calculateHash } from "./util"
 
 // 默认 10MB；可由 store 中的 uploadConfig.chunkSizeMB 覆盖
 const DEFAULT_CHUNK_SIZE_MB = 10
-const CONCURRENT_CHUNKS = 3
+const CONCURRENT_CHUNKS = 1
 const MAX_RETRIES = 3
 
 export const getChunkSize = (chunkSizeMB?: number): number => {
