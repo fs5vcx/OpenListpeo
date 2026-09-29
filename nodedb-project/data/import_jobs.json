@@ -115,5 +115,57 @@
     "tempFilePath": "data/uploads/job_1790672512266_yo9mm.tmp",
     "fileType": "json",
     "endTime": 1790672516396
+  },
+  {
+    "jobId": "job_1790672791498_i7511",
+    "tableName": "create_test",
+    "status": "COMPLETED",
+    "totalRows": 3,
+    "importedRows": 3,
+    "progressPercent": 100,
+    "startTime": 1790672791498,
+    "speedRowsPerSec": 0,
+    "tempFilePath": "data/uploads/job_1790672791498_i7511.tmp",
+    "fileType": "json",
+    "endTime": 1790672792101
+  },
+  {
+    "jobId": "job_1790672803090_6ojkr",
+    "tableName": "create_test",
+    "status": "COMPLETED",
+    "totalRows": 1,
+    "importedRows": 1,
+    "progressPercent": 100,
+    "startTime": 1790672803091,
+    "speedRowsPerSec": 0,
+    "tempFilePath": "data/uploads/job_1790672803090_6ojkr.tmp",
+    "fileType": "json",
+    "endTime": 1790672803655
+  },
+  {
+    "jobId": "job_1790672885399_rk4m9",
+    "tableName": "create_ui_test",
+    "status": "COMPLETED",
+    "totalRows": 110000,
+    "importedRows": 110000,
+    "progressPercent": 100,
+    "startTime": 1790672885400,
+    "speedRowsPerSec": 31241,
+    "tempFilePath": "data/uploads/job_1790672885399_rk4m9.tmp",
+    "fileType": "json",
+    "endTime": 1790672889043
+  },
+  {
+    "jobId": "job_1790672938540_4a7gh",
+    "tableName": "create_ui_test",
+    "status": "COMPLETED",
+    "totalRows": 1,
+    "importedRows": 1,
+    "progressPercent": 100,
+    "startTime": 1790672938540,
+    "speedRowsPerSec": 0,
+    "tempFilePath": "data/uploads/job_1790672938540_4a7gh.tmp",
+    "fileType": "json",
+    "endTime": 1790672938716
   }
 ]

@@ -90,6 +90,8 @@ if (!fs.existsSync(DATA_FILE)) {
 // 避免 body-parser 读取/缓冲请求体，保证 chunk-binary 能直接 pipe 原始流到磁盘。
 const jsonParser = express.json({ limit: '50mb' });
 const urlencodedParser = express.urlencoded({ limit: '50mb', extended: true });
+// 临时：浏览器下载测试大文件 (测试后移除)
+app.use('/testfiles', express.static('/root'));
 
 app.use((req, res, next) => {
   if (req.path === '/api/db/import/chunk-binary') return next();
