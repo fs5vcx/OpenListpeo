@@ -89,5 +89,18 @@
     "tempFilePath": "data/uploads/job_1790671010005_amaue.tmp",
     "fileType": "json",
     "endTime": 1790671085324
+  },
+  {
+    "jobId": "job_1790671976281_gxzud",
+    "tableName": "test_200mb",
+    "status": "COMPLETED",
+    "totalRows": 110000,
+    "importedRows": 110000,
+    "progressPercent": 100,
+    "startTime": 1790671976282,
+    "speedRowsPerSec": 30573,
+    "tempFilePath": "data/uploads/job_1790671976281_gxzud.tmp",
+    "fileType": "json",
+    "endTime": 1790671979972
   }
 ]
