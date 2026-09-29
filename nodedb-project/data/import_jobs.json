@@ -167,5 +167,18 @@
     "tempFilePath": "data/uploads/job_1790672938540_4a7gh.tmp",
     "fileType": "json",
     "endTime": 1790672938716
+  },
+  {
+    "jobId": "job_1790673096753_8jncs",
+    "tableName": "big_create_test",
+    "status": "COMPLETED",
+    "totalRows": 110000,
+    "importedRows": 110000,
+    "progressPercent": 100,
+    "startTime": 1790673096754,
+    "speedRowsPerSec": 31783,
+    "tempFilePath": "data/uploads/job_1790673096753_8jncs.tmp",
+    "fileType": "json",
+    "endTime": 1790673100323
   }
 ]
