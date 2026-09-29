@@ -102,5 +102,18 @@
     "tempFilePath": "data/uploads/job_1790671976281_gxzud.tmp",
     "fileType": "json",
     "endTime": 1790671979972
+  },
+  {
+    "jobId": "job_1790672512266_yo9mm",
+    "tableName": "customers",
+    "status": "COMPLETED",
+    "totalRows": 110000,
+    "importedRows": 110000,
+    "progressPercent": 100,
+    "startTime": 1790672512266,
+    "speedRowsPerSec": 27445,
+    "tempFilePath": "data/uploads/job_1790672512266_yo9mm.tmp",
+    "fileType": "json",
+    "endTime": 1790672516396
   }
 ]
