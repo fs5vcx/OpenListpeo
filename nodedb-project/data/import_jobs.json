@@ -1,0 +1,41 @@
+[
+  {
+    "jobId": "job_1790668381600_h0gor",
+    "tableName": "huge_tbl",
+    "status": "COMPLETED",
+    "totalRows": 50000,
+    "importedRows": 50000,
+    "progressPercent": 100,
+    "startTime": 1790668381600,
+    "speedRowsPerSec": 63939,
+    "tempFilePath": "data/uploads/job_1790668381600_h0gor.tmp",
+    "fileType": "json",
+    "endTime": 1790668382394
+  },
+  {
+    "jobId": "job_1790668416757_pviok",
+    "tableName": "huge_tbl2",
+    "status": "COMPLETED",
+    "totalRows": 50000,
+    "importedRows": 50000,
+    "progressPercent": 100,
+    "startTime": 1790668416758,
+    "speedRowsPerSec": 63131,
+    "tempFilePath": "data/uploads/job_1790668416757_pviok.tmp",
+    "fileType": "json",
+    "endTime": 1790668417586
+  },
+  {
+    "jobId": "job_1790668462025_v5wrt",
+    "tableName": "csv_tbl",
+    "status": "COMPLETED",
+    "totalRows": 3,
+    "importedRows": 3,
+    "progressPercent": 100,
+    "startTime": 1790668462025,
+    "speedRowsPerSec": 0,
+    "tempFilePath": "data/uploads/job_1790668462025_v5wrt.tmp",
+    "fileType": "csv",
+    "endTime": 1790668462634
+  }
+]
