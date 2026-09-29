@@ -126,19 +126,48 @@ export const LargeFileImporterModal: React.FC<LargeFileImporterModalProps> = ({
       const totalSize = selectedFile.size;
       let offset = 0;
       let chunkIndex = 0;
+      const maxRetries = 5;
+
+      const uploadOneChunk = async (slice: Blob, idx: number): Promise<void> => {
+        let lastErr: any = null;
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+          try {
+            const controller = new AbortController();
+            // 单分片超时：按分片大小动态估算，避免慢盘/网络抖动导致浏览器长挂
+            const timeoutMs = Math.max(30000, Math.ceil((slice.size / (1024 * 1024)) * 8000));
+            const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+            const chunkRes = await fetch(`/api/db/import/chunk-binary?jobId=${currentJobId}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/octet-stream' },
+              body: slice,
+              signal: controller.signal
+            });
+            clearTimeout(timer);
+
+            if (chunkRes.ok) return;
+            if (chunkRes.status === 400) {
+              // UPLOAD_ABORTED 等客户端断开类错误，直接重试
+              lastErr = new Error(`分片 ${idx + 1} 返回 ${chunkRes.status}`);
+            } else {
+              const errData = await chunkRes.json().catch(() => ({}));
+              throw new Error(errData.error || `上传分片 ${idx + 1} 失败 (${chunkRes.status})`);
+            }
+          } catch (e: any) {
+            lastErr = e;
+            // fetch 网络错误 / 超时：指数退避重试 (500/1000/2000/4000ms)
+            if (attempt < maxRetries - 1) {
+              await new Promise(r => setTimeout(r, 500 * Math.pow(2, attempt)));
+              continue;
+            }
+          }
+        }
+        throw lastErr || new Error(`上传分片 ${idx + 1} 失败`);
+      };
 
       while (offset < totalSize) {
         const slice = selectedFile.slice(offset, offset + chunkSize);
-
-        const chunkRes = await fetch(`/api/db/import/chunk-binary?jobId=${currentJobId}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/octet-stream' },
-          body: slice
-        });
-        if (!chunkRes.ok) {
-          const errData = await chunkRes.json().catch(() => ({}));
-          throw new Error(errData.error || `上传分片 ${chunkIndex + 1} 失败`);
-        }
+        await uploadOneChunk(slice, chunkIndex);
 
         offset += chunkSize;
         chunkIndex++;

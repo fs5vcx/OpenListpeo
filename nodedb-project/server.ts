@@ -86,8 +86,18 @@ if (!fs.existsSync(DATA_FILE)) {
   persistDatabase();
 }
 
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+// 全局 JSON / 表单解析：跳过大文件二进制分块上传路径，
+// 避免 body-parser 读取/缓冲请求体，保证 chunk-binary 能直接 pipe 原始流到磁盘。
+const jsonParser = express.json({ limit: '50mb' });
+const urlencodedParser = express.urlencoded({ limit: '50mb', extended: true });
+app.use((req, res, next) => {
+  if (req.path === '/api/db/import/chunk-binary') return next();
+  jsonParser(req, res, next);
+});
+app.use((req, res, next) => {
+  if (req.path === '/api/db/import/chunk-binary') return next();
+  urlencodedParser(req, res, next);
+});
 
 // API Endpoints
 app.get('/api/db/status', (req, res) => {
@@ -669,17 +679,32 @@ app.post('/api/db/import/chunk', (req, res) => {
 });
 
 // 追加大文件原生二进制分块数据 (POST /api/db/import/chunk-binary?jobId=xxx)
-app.post('/api/db/import/chunk-binary', express.raw({ type: 'application/octet-stream', limit: '50mb' }), (req, res) => {
-  try {
-    const jobId = (req.query.jobId as string) || (req.headers['x-job-id'] as string);
-    if (!jobId || !req.body || !Buffer.isBuffer(req.body)) {
-      return res.status(400).json({ error: '缺少 jobId 或无效二进制载荷' });
-    }
-    backgroundImporter.appendChunkBinary(jobId, req.body);
-    res.json({ success: true });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+// 采用流式 pipe：请求体直接写入磁盘临时文件，零内存缓冲、零事件循环阻塞。
+// 旧方案 express.raw 会把整块 (2.5MB+) 读入 Buffer 再交给 fs.appendFileSync 同步写盘，
+// 大文件上传时阻塞事件循环导致浏览器收不到响应而主动 abort ("request aborted")。
+app.post('/api/db/import/chunk-binary', (req, res) => {
+  const jobId = (req.query.jobId as string) || (req.headers['x-job-id'] as string);
+  if (!jobId) {
+    return res.status(400).json({ error: '缺少 jobId' });
   }
+
+  backgroundImporter.appendChunkStream(jobId, req)
+    .then(() => {
+      res.json({ success: true });
+    })
+    .catch((err: any) => {
+      if (err.message === 'CLIENT_ABORTED') {
+        // 浏览器主动断开：不写错误日志刷屏，仅返回 400
+        if (!res.headersSent) {
+          res.status(400).json({ error: 'UPLOAD_ABORTED' });
+        }
+        return;
+      }
+      console.error('[chunk-binary] error:', err.message);
+      if (!res.headersSent) {
+        res.status(500).json({ error: err.message });
+      }
+    });
 });
 
 // 完成上传并启动后台零OOM流式解析写入 (POST /api/db/import/finish)
@@ -839,9 +864,19 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`NodeDB Studio server running at http://localhost:${PORT}`);
   });
+
+  // 大文件上传超时配置：
+  // - requestTimeout: 单个请求最长耗时，大文件多分块上传时单个 2.5MB 分块在慢盘/杀软环境可能较慢，
+  //   设为 10 分钟避免 Node 主动断开导致浏览器 "request aborted"。
+  // - headersTimeout: 头部接收超时，保持默认略宽松。
+  // - keepAliveTimeout / maxRequestsPerSocket: 提升 HTTP keep-alive 复用率，减少大文件多请求握手开销。
+  server.requestTimeout = 10 * 60 * 1000;
+  server.headersTimeout = 2 * 60 * 1000;
+  server.keepAliveTimeout = 120 * 1000;
+  server.maxRequestsPerSocket = 0;
 }
 
 startServer();

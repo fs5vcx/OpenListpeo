@@ -131,6 +131,64 @@ export class BackgroundImporter {
     fs.appendFileSync(job.tempFilePath, buffer);
   }
 
+  /**
+   * 流式追加二进制分块 (Zero-Buffer Streaming Append)
+   * 将 HTTP 请求体直接 pipe 到磁盘临时文件，全程不分配整块 Buffer，
+   * 既避免单次 2.5MB+ 内存峰值，也避免 fs.appendFileSync 阻塞事件循环
+   * 导致大文件上传时浏览器收不到响应而主动 abort ("request aborted")。
+   */
+  public appendChunkStream(
+    jobId: string,
+    stream: NodeJS.ReadableStream
+  ): Promise<void> {
+    const job = this.jobs.get(jobId);
+    if (!job) {
+      return Promise.reject(new Error(`未找到该导入任务: ${jobId}`));
+    }
+    if (!fs.existsSync(job.tempFilePath)) {
+      return Promise.reject(new Error(`临时文件不存在: ${jobId}`));
+    }
+
+    return new Promise<void>((resolve, reject) => {
+      const writeStream = fs.createWriteStream(job.tempFilePath, { flags: 'a' });
+      let clientAborted = false;
+
+      const cleanup = () => {
+        stream.removeAllListeners();
+        writeStream.removeAllListeners();
+      };
+
+      stream.on('error', (err: any) => {
+        clientAborted = true;
+        writeStream.destroy();
+        cleanup();
+        // 客户端主动断开 (浏览器 abort / 网络中断)，不抛 500，返回可识别错误
+        if (err.code === 'ECONNRESET' || err.code === 'ECONNABORTED' || err.message?.includes('aborted')) {
+          reject(new Error('CLIENT_ABORTED'));
+        } else {
+          reject(err);
+        }
+      });
+
+      stream.on('close', () => {
+        // 客户端在写入完成前关闭连接
+        if (clientAborted) return;
+      });
+
+      writeStream.on('error', (err: any) => {
+        cleanup();
+        reject(err);
+      });
+
+      writeStream.on('finish', () => {
+        cleanup();
+        resolve();
+      });
+
+      stream.pipe(writeStream);
+    });
+  }
+
   public startProcessing(
     db: Database,
     jobId: string,

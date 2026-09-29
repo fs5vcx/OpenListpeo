@@ -37,5 +37,57 @@
     "tempFilePath": "data/uploads/job_1790668462025_v5wrt.tmp",
     "fileType": "csv",
     "endTime": 1790668462634
+  },
+  {
+    "jobId": "job_1790670656809_b7k3y",
+    "tableName": "big_test",
+    "status": "COMPLETED",
+    "totalRows": 60000,
+    "importedRows": 60000,
+    "progressPercent": 100,
+    "startTime": 1790670656809,
+    "speedRowsPerSec": 32103,
+    "tempFilePath": "data/uploads/job_1790670656809_b7k3y.tmp",
+    "fileType": "json",
+    "endTime": 1790670658722
+  },
+  {
+    "jobId": "job_1790670802419_giohx",
+    "tableName": "big_test",
+    "status": "COMPLETED",
+    "totalRows": 60000,
+    "importedRows": 60000,
+    "progressPercent": 100,
+    "startTime": 1790670802419,
+    "speedRowsPerSec": 28791,
+    "tempFilePath": "data/uploads/job_1790670802419_giohx.tmp",
+    "fileType": "json",
+    "endTime": 1790670804562
+  },
+  {
+    "jobId": "job_1790670963546_gbk8a",
+    "tableName": "big_test",
+    "status": "COMPLETED",
+    "totalRows": 60000,
+    "importedRows": 60000,
+    "progressPercent": 100,
+    "startTime": 1790670963547,
+    "speedRowsPerSec": 29985,
+    "tempFilePath": "data/uploads/job_1790670963546_gbk8a.tmp",
+    "fileType": "json",
+    "endTime": 1790670965588
+  },
+  {
+    "jobId": "job_1790671010005_amaue",
+    "tableName": "browser_test",
+    "status": "COMPLETED",
+    "totalRows": 60000,
+    "importedRows": 60000,
+    "progressPercent": 100,
+    "startTime": 1790671010005,
+    "speedRowsPerSec": 797,
+    "tempFilePath": "data/uploads/job_1790671010005_amaue.tmp",
+    "fileType": "json",
+    "endTime": 1790671085324
   }
 ]
